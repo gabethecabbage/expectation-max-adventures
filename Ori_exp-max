@@ -1,0 +1,282 @@
+#! /usr/bin/python2
+import random
+import Image
+import PIL.ImageOps
+import copy
+import math
+import Gnuplot
+
+def OpenImageFile(imageFileName): #open and define an image file
+  startImage = Image.open(imageFileName) #opens the file at the root of the script
+	startImage.show() #trys to display the image using xv, for debug
+	print startImage.format, startImage.size, startImage.mode #prints some vital statistics that help debug
+	startImage = PIL.ImageOps.invert(startImage) #this stops the rotation method from putting borders on the image
+
+	return startImage
+
+def RandomCoords(ranRotImage):
+	(range((ranRotImage.size[0])-1)) #picks a random x coord
+	ranY=random.choice(range((ranRotImage.size[1])-1)) #picks a random y coord
+	ranCoords=[] #make list and add coords to it
+	ranCoords.append(ranX),ranCoords.append(ranY)
+	return ranCoords
+
+def RectangularToPolar(startImage,recCoords):
+	centerX=(startImage.size[0]/2)-1
+	centerY=(startImage.size[1]/2)-1
+	x=recCoords[0]-centerX
+	y=recCoords[1]-centerY #this sets rectangular coord (0,0) to the center of the image	
+	r=math.sqrt((x**2)+(y**2)) #finds polar coord r
+	r=round(r, 0) #rounding ensures that radial coords are likely to overlap
+	q=math.atan2(y,x) #finds polar coord q
+	q=round((math.degrees(q)), 0) #rounded and set to degrees to make rotation simpler
+	polarCoords=[]
+	polarCoords.append(r),polarCoords.append(q)	
+	return polarCoords
+
+def PolarToRectangular(SamplingImage,(r,q)):
+	recCoords=[]
+	q = math.pi * q / 180.0 
+	x = r* math.cos(q)
+	y = r* math.sin(q)
+	centerX=(SamplingImage.size[0]/2)-1
+	centerY=(SamplingImage.size[1]/2)-1
+	recCoords.append(x+centerX)
+	recCoords.append(y+centerY) #this sets rectangular coord (0,0) to the top left corner of the image	
+	recCoords[0]=int(recCoords[0]) #rounding ensures that radial coords are likely to overlap
+	recCoords[1]=int(recCoords[1])	
+	return recCoords
+
+def RandomPixel(SamplingImage):
+	maxR=int(math.sqrt((((SamplingImage.size[0]/2))**2)+(((SamplingImage.size[1]/2))**2)))
+	 #finding the greatest theoretical value of r
+	n=0
+	while (n==0):
+		r=random.choice(range(maxR)) #runs through every r
+		q=random.choice(range(-179,181)) #runs through every angle for q
+		i=[]
+		x,y=PolarToRectangular(SamplingImage,(r,q))
+		if x<(SamplingImage.size[1]-1) and y<(SamplingImage.size[1]-1) and x>0 and y>0:
+			iRGB=SamplingImage.getpixel((x,y))
+			if iRGB[0]>235 and iRGB[1]>235 and iRGB[2]>235: #thresholding inverted black or white
+				i.append(1) #means black pixel
+				i.append(r),i.append(q),i.append(x),i.append(y)
+				n=1
+				#print "black pixel"
+			else:
+				n=0
+				#returns back into loop if pixel is white
+	return i
+
+def MakeFrame(startImage,frameSizeUpper,frameSizeLower): #make a lower resolution image 
+	r=random.random() #generate a random float	
+	ranAngle=360*r #use float to make a random angle	
+	ranRotImage=startImage.rotate(ranAngle)
+	frame=[] #make a list to store the two or three pixels that make up a frame	
+	for n in range(random.choice((frameSizeLower,frameSizeUpper))): # generates an average number of pixels between thoughs points
+		i=RandomPixel(ranRotImage)
+		piPhi={}
+		i.append(piPhi)
+		frame.append(i)
+	return frame
+
+def AddStackMetaData(frameStack,startImage): #for data about the source image, could take more information and is usefull for adding data not generated within this script
+	frameStack['meta']=(startImage.size[0],startImage.size[1]) #adds the resolution as first two list entrys 
+	return frameStack
+
+def MakeFrameStack(startImage,frameSizeUpper,frameSizeLower,stackSize):
+	frameStack={} #make dictionary to store all the individual frames
+	for n in range(stackSize): #makes dictionary with a stated number of frames set by stackSize
+		frameStack[n]=MakeFrame(startImage,frameSizeUpper,frameSizeLower) #add randomly generated to a dictionary
+	frameStack=AddStackMetaData(frameStack,startImage) #add any usefull metadata
+	return frameStack
+	
+def RotatePixel(frameStack,frameNo,n,angle):
+	q=frameStack[frameNo][n][2]+angle
+	if (q>180):
+		q=q-360
+	return q
+
+def RotateFrame(frameStack,frameNo,angle):
+	#frameStackTemp=copy.deepcopy(frameStack) #make a new temporary frame stack
+	for n in range(len(frameStack[frameNo])): #run for all pixels in frame
+		frameStack[frameNo][n][2]=frameStack[frameNo][n][2]+angle
+		if (frameStack[frameNo][n][2]>180):
+			frameStack[frameNo][n][2]=frameStack[frameNo][n][2]-360
+	return frameStack
+
+def RandomIntensityModelGen(frameStack):
+	W=[]
+	maxR=int(math.sqrt((((frameStack['meta'][0]/2))**2)+(((frameStack['meta'][1]/2))**2))) #finding the greatest theoretical value of r
+	for m in range(maxR): #runs through every r
+		for n in range(-179,181): #runs through every angle for q
+			WI=random.choice((0.1,1)), m , n #makes a tuple with a random black or white pixel and its coords
+			W.append(WI) #writes all the tuples to a list
+	print "You made a square of randomly placed grey dots, congratulations."
+	return W
+
+def IntensityModelFromImage(SamplingImage,frameStack):
+	W=[]
+	maxR=int(math.sqrt((((frameStack['meta'][0]/2))**2)+(((frameStack['meta'][1]/2))**2))) #finding the greatest theoretical value of r
+	for r in range(maxR): #runs through every r
+		for q in range(-179,181): #runs through every angle for q
+			i=[]
+			x,y=PolarToRectangular(SamplingImage,(r,q))
+			if x<frameStack['meta'][0] and y<frameStack['meta'][1] and x>0 and y>0:
+				iRGB=SamplingImage.getpixel((x,y))
+				if iRGB[0]>235 and iRGB[1]>235 and iRGB[2]>235: #thresholding inverted black or white
+					i.append(1) #means black pixel
+					i.append(r),i.append(q),i.append(x),i.append(y)
+					W.append(i)
+				else:
+					i.append(0.1) #means white pixel
+					i.append(r),i.append(q),i.append(x),i.append(y)
+					W.append(i)
+	print "You turned a perfectly good image into a list of polar coordinates, well done."
+	return W
+
+def PixProbAssign(W, frameStack, frameNo, pixNo):
+	m=(frameStack[frameNo][pixNo][1])*360 #find the first matching r value in the intensity model
+	m=m+179+frameStack[frameNo][pixNo][2]		#jump to the correct q
+	if frameStack[frameNo][pixNo][1]==W[m][1]:	#this whole pair of if statements could go
+		if frameStack[frameNo][pixNo][2]==W[m][2]: #but they make sure the values match for little overhead
+			Pi=W[m][0] #if they do set probability i to the pixel value
+	return Pi
+	
+def FrameProbAssign(W, frameStack, frameNo, phi):
+	Pf=1
+	for pixNo in range(len(frameStack[frameNo])): #run through each pixel in the given frame
+		Pi=PixProbAssign(W, frameStack, frameNo, pixNo)
+		frameStack[frameNo][pixNo][5][phi] = Pi
+		Pf=Pf*Pi
+	return Pf #return the product of the probabilities for each pixel
+
+def ProbDistAssign(W, frameStack, angle, frameNo): #makes a probability for each rotation and adds them to a list
+	pF={}
+	for n in range(360/angle): #runs for 360 devided by the number of steps the user request
+		phi=n*angle
+		frameStack=RotateFrame(frameStack,frameNo,angle) #rotate the frame
+		m=FrameProbAssign(W, frameStack, frameNo, phi) #figure out the probability
+		pF[phi]=m #make a dictionary entry with the angle of rotation as key and the probability
+	return pF #returns a list of tuples with the rotation and probability
+
+def CalcProbs(W, frameStack, angle):
+	pF=[]
+	for n in range((len(frameStack))-1):
+		pF.append(ProbDistAssign(W, frameStack, angle, n))
+	return pF
+	
+def PlotStuff(pF, angle, frameStack): 
+		for n in range(len(pF)): #chacks the number of frames in the probability dictionary
+			probList=[]
+			for m in range(len(pF[n])): #runs through all the rotations given
+				degProb=(m*angle, pF[n][m*angle])
+				probList.append(degProb) #makes a list of tuples that GnuPlot can read
+			gp = Gnuplot.Gnuplot()
+			gp.title('Plot of frame (%d)s probability with regards to an intensity model at a set of rotations' % n)
+			gp.xlabel("degrees of rotation")
+			gp.ylabel("calculated probability value")
+			gp('set style data linespoints')
+			gp.plot(probList)
+			gp.hardcopy("AngvsProb(%d)" % n)
+			sampleIMG=WriteFramesImage(frameStack, n)
+			sampleIMG.save("Frame (%d) unrotated.jpg" % n)
+
+
+def WritePixelImage(i, x, y, image): #writes a pixel at x and y to an image
+	j=1-i
+	g=int(255*j) #g is a grey scale value between 1 and 0.1 translated into standard colour values
+	image.putpixel((x,y), (g,g,g)) 
+	return image
+
+def WriteFramesImage(frameStack, frameNo): #goes through every pixel in a frame and adds it to an image
+	frameIMG = Image.new("RGB",(256,256),"white")
+	for n in range(len(frameStack[frameNo])):
+		frameIMG=WritePixelImage(frameStack[frameNo][n][0], frameStack[frameNo][n][3],frameStack[frameNo][n][4], frameIMG)
+	return frameIMG
+
+def TestSamplePrint(noSampleFrames, frameStack, W): #print a frame, usefull for debug
+	for n in range(noSampleFrames): 
+		sampleIMG=WriteFramesImage(frameStack, n)
+		probDist=ProbAssign(W, frameStack, n)
+		s=str(n)
+		s+=' - '
+		s+=str(probDist)
+		s+='.jpg'
+		sampleIMG.save(s)
+
+def PrintIntensityModel(W, fileName):
+	modelImage = Image.new("RGB",(256,256),"white")
+	for n in range(len(W)):
+			(x, y)=PolarToRectangular(modelImage,(W[n][1],W[n][2]))
+			if x<(255) and y<(255) and x>0 and y>0:	
+				modelImage=WritePixelImage(W[n][0], int(x), int(y),modelImage) #uses the X and y data stored at the end of the intensity map, needs to be generated by converting the polar coords into rectangular. 
+	modelImage.save(fileName)
+
+def BlankIntensityModelGen(frameStack):
+	W=[]
+	maxR=int(math.sqrt((((frameStack['meta'][0]/2))**2)+(((frameStack['meta'][1]/2))**2))) #finding the greatest theoretical value of r
+	for r in range(maxR): #runs through every r
+		for q in range(-179,181): #runs through every angle for q
+			i=[]
+			i.append(0.1) #writes all the tuples to a list
+			i.append(r),i.append(q),i.append(0)
+			W.append(i)
+	return W
+	
+def AddPixelToModel(W, r, q, i):
+	m=(r*360)
+	m=m+179+q #find the first matching r value in the intensity model then jump to the correct q
+	if r==W[m][1]:	#this whole pair of if statements could go
+		if q==W[m][2]: #but they make sure the values match for little overhead
+			W[m][0]=W[m][0]+i #if they do add i and
+			W[m][3]=W[m][3]+1 #add a value to acount we can use to normalise later		
+	return W
+	
+def IntensityModelGen(frameStack, angle, pF):
+	W=BlankIntensityModelGen(frameStack) #make a background intensity map to add the probability ditributions to
+	for frameNo in range((len(frameStack))-1): #for every frame
+		for pixelNo in range(len(frameStack[frameNo])): #and every pixel in that frame
+			n=0
+			for n in range(360/angle): #and ever rotation of that pixel
+				q=RotatePixel(frameStack,frameNo,pixelNo,n*2) 
+				r=frameStack[frameNo][pixelNo][1] 
+				i=(frameStack[frameNo][pixelNo][5][n*2])*pF[frameNo][n*2]
+				W=AddPixelToModel(W, r, q, i)
+	for m in range(len(W)):
+		if not W[m][3]==0:
+			W[m][0]=W[m][0]/W[m][3]
+	return W
+
+def ExpectationMaximisation():
+		#imageFileName = raw_input("Enter image file name: ")
+		imageFileName = "leaf-shape.jpg"
+		angle=2
+		startImage=OpenImageFile(imageFileName)
+		frameStack=MakeFrameStack(startImage,frameSizeUpper=3,frameSizeLower=3,stackSize=1000)
+		print "Frame stacks done, you're welcome!"
+		#intensityModel=RandomIntensityModelGen(frameStack)
+		intensityModel=IntensityModelFromImage(startImage,frameStack)
+		fileName="Initial Intensity Model.jpg"
+		PrintIntensityModel(intensityModel, fileName)
+		#print intensityModel
+		iterateFor=5
+		for a in range(iterateFor):
+			pF=CalcProbs(intensityModel, frameStack, angle)
+			print ("probability distribution %d calculated" %a)
+			del intensityModel[:]
+			intensityModel=IntensityModelGen(frameStack, angle, pF)
+			print ("Iteration %d complete" %a)
+			fileName="Intensity Model %d.jpg" %a
+			print fileName
+			PrintIntensityModel(intensityModel, fileName)
+			print intensityModel[0]
+		print "Jobs-a-goodun"
+		
+
+
+ExpectationMaximisation()
+#PlotStuff(pF, angle, frameStack)
+
+#PrintIntensityModel(intensityModel)
+#PrintIntensityModel(intensityModel2)
